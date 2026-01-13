@@ -87,21 +87,7 @@ st.divider()
 # 2) Filtros
 c1, c2, c3 = st.columns([2, 1, 1])
 
-with c1:
-    # usamos session_state para que el botón HOY pueda cambiar el date_input
-    if "fecha_inicio" not in st.session_state:
-        st.session_state["fecha_inicio"] = hoy_ar()
 
-    fecha_elegida = st.date_input("Fecha de inicio", st.session_state["fecha_inicio"], key="fecha_inicio")
-
-with c2:
-    cantidad_dias = st.slider("Días a ver", 1, 31, 7)
-
-with c3:
-    st.write("")  # aire
-    if st.button("📍 HOY"):
-        st.session_state["fecha_inicio"] = hoy_ar()
-        st.rerun()
 
 solo_mi_grupo = st.checkbox("👁️ Ver solo mi grupo", value=False)
 
