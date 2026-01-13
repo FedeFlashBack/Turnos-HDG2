@@ -87,7 +87,14 @@ st.divider()
 # 2) Filtros
 c1, c2, c3 = st.columns([2, 1, 1])
 
-
+col1, col2 = st.columns(2)
+with col1:
+    fecha_elegida = st.date_input("Fecha de inicio", date.today())
+    df = obtener_turnos(fecha_elegida, int(cantidad_dias))
+turno_hoy = df.iloc[0][grupo_seleccionado]
+st.success(f"Hola **{grupo_seleccionado}**: El día {fecha_elegida.strftime('%d/%m')} entras de **{turno_hoy}**")
+with col2:
+    cantidad_dias = st.slider("Días a ver", min_value=1, max_value=31, value=7)
 
 solo_mi_grupo = st.checkbox("👁️ Ver solo mi grupo", value=False)
 
