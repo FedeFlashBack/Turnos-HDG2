@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date, timedelta
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Rotación Cañuelas", page_icon="🏭", layout="centered")
+st.set_page_config(page_title="Turnos-HDG2", page_icon="🏭", layout="centered")
 
 # --- ESTILOS CSS ---
 st.markdown("""
