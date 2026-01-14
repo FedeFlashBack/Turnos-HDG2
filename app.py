@@ -1,9 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
+import qrcode
+from io import BytesIO
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Turnos HDG2", page_icon="🏭", layout="centered")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Rotación Cañuelas", page_icon="🏭", layout="centered")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -13,111 +15,94 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- NOMBRES DE LOS REFERENTES ---
-nombres = {
-    "52A": "52A (Palacios)",
-    "52B": "52B (Schneider)",
-    "52C": "52C (Troncoso)",
-    "52D": "52D (Gallardo)"
-}
+# --- DATOS ---
+nombres = { "52A": "52A (Palacios)", "52B": "52B (Schneider)", "52C": "52C (Troncoso)", "52D": "52D (Gallardo)" }
+dias_esp = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
-# --- TRUCO PARA DÍAS EN ESPAÑOL ---
-def traducir_dia(fecha):
-    dias_esp = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-    return dias_esp[fecha.weekday()]
-
-# --- MOTOR DE CÁLCULO ---
-def obtener_turnos(fecha_inicio, dias_a_mostrar):
-    # Patrón: 6M - 1F - 6N - 3F - 6T - 2F
-    patron = ["M","M","M","M","M","M", "F", "N","N","N","N","N","N", "F","F","F", "T","T","T","T","T","T", "F","F"]
+# --- FUNCIÓN DE COLORES (NUEVO 🎨) ---
+def colorear_celdas(val):
+    color = ''
+    font_weight = 'normal'
+    val_str = str(val)
     
+    if 'M' in val_str and 'Mañana' in val_str:
+        color = '#fffec8' # Amarillo
+    elif 'T' in val_str and 'Tarde' in val_str:
+        color = '#ffdcf5' # Naranja suave
+    elif 'N' in val_str and 'Noche' in val_str:
+        color = '#d0e0ff' # Azul
+    elif 'F' in val_str and 'Franco' in val_str:
+        color = '#d9f2d0' # Verde
+        font_weight = 'bold'
+        
+    return f'background-color: {color}; color: black; font-weight: {font_weight}'
+
+# --- LÓGICA DE TURNOS ---
+def obtener_turnos(fecha_inicio, dias_a_mostrar):
+    patron = ["M","M","M","M","M","M", "F", "N","N","N","N","N","N", "F","F","F", "T","T","T","T","T","T", "F","F"]
     offsets = {"52A": 14, "52B": 20, "52C": 2, "52D": 8}
     fecha_base = date(2025, 1, 1)
-    
-    iconos = {
-        "M": "☀️ Mañana", 
-        "T": "🌆 Tarde", 
-        "N": "🌙 Noche", 
-        "F": "🏖️ Franco"
-    }
+    iconos = {"M": "☀️ M - Mañana", "T": "🌆 T - Tarde", "N": "🌙 N - Noche", "F": "🏖️ F - Franco"}
     
     datos = []
-    
     for i in range(dias_a_mostrar):
         fecha_actual = fecha_inicio + timedelta(days=i)
         diff = (fecha_actual - fecha_base).days
         
-        # Calcular índices
-        idx_a = (offsets["52A"] + diff) % 24
-        idx_b = (offsets["52B"] + diff) % 24
-        idx_c = (offsets["52C"] + diff) % 24
-        idx_d = (offsets["52D"] + diff) % 24
-        
         fila = {
-            "Fecha": fecha_actual,
-            "Fecha_Texto": fecha_actual.strftime("%d/%m"),
-            "Día": traducir_dia(fecha_actual), # <--- AQUÍ USAMOS LA TRADUCCIÓN
-            "52A": iconos[patron[idx_a]],
-            "52B": iconos[patron[idx_b]],
-            "52C": iconos[patron[idx_c]],
-            "52D": iconos[patron[idx_d]]
+            "Fecha": fecha_actual.strftime("%d/%m"),
+            "Día": dias_esp[fecha_actual.weekday()],
+            "52A": iconos[patron[(offsets["52A"] + diff) % 24]],
+            "52B": iconos[patron[(offsets["52B"] + diff) % 24]],
+            "52C": iconos[patron[(offsets["52C"] + diff) % 24]],
+            "52D": iconos[patron[(offsets["52D"] + diff) % 24]]
         }
         datos.append(fila)
-        
     return pd.DataFrame(datos)
 
-# --- INTERFAZ GRÁFICA ---
-
+# --- PANTALLA PRINCIPAL ---
 st.title("🏭 Rotación de Turnos")
-st.write("Selecciona tu grupo para ver tu calendario.")
+st.write("Selecciona tu grupo:")
 
-# 1. Selector de Grupo
-grupo_seleccionado = st.selectbox(
-    "¿A qué grupo perteneces?",
-    ["52A", "52B", "52C", "52D"],
-    format_func=lambda x: nombres[x]
-)
+# Selector
+grupo = st.selectbox("Grupo:", ["52A", "52B", "52C", "52D"], format_func=lambda x: nombres[x])
 
-st.divider()
+# Filtros
+c1, c2 = st.columns(2)
+fecha = c1.date_input("Desde:", date.today())
+dias = c2.slider("Días:", 1, 31, 14)
 
-# 2. Filtros
-col1, col2 = st.columns(2)
-with col1:
-    fecha_elegida = st.date_input("Fecha de inicio", date.today())
-with col2:
-    cantidad_dias = st.slider("Días a ver", 1, 31, 7)
-
-# 3. Resultados
 if st.button("Buscar Turnos"):
-    df = obtener_turnos(fecha_elegida, cantidad_dias)
+    df = obtener_turnos(fecha, dias)
     
-    turno_hoy = df.iloc[0][grupo_seleccionado]
-    dia_nombre = traducir_dia(fecha_elegida)
-    
-    st.success(f"Hola **{grupo_seleccionado}**: El **{dia_nombre} {fecha_elegida.strftime('%d/%m')}** entras de **{turno_hoy}**")
+    # Mensaje resumen
+    hoy_val = df.iloc[0][grupo]
+    st.info(f"El {dias_esp[fecha.weekday()]} {fecha.strftime('%d/%m')} estás de: **{hoy_val}**")
 
-    # Configurar columnas
-    column_config = {
-        "Fecha": st.column_config.TextColumn("📅", width="small"),
-        "Fecha_Texto": st.column_config.TextColumn("Fecha", width="small"),
-        "Día": st.column_config.TextColumn("Día", width="small"),
-        "52A": st.column_config.TextColumn("52A", width="small"),
-        "52B": st.column_config.TextColumn("52B", width="small"),
-        "52C": st.column_config.TextColumn("52C", width="small"),
-        "52D": st.column_config.TextColumn("52D", width="small"),
-    }
-    
-    column_config[grupo_seleccionado] = st.column_config.TextColumn(
-        f"🔴 TU TURNO", 
-        width="medium"
-    )
-
-    # Ordenar columnas
-    cols_ordenadas = ["Fecha_Texto", "Día", grupo_seleccionado] + [c for c in ["52A", "52B", "52C", "52D"] if c != grupo_seleccionado]
-    
+    # Ordenar y Mostrar
+    cols = ["Fecha", "Día", grupo] + [c for c in ["52A", "52B", "52C", "52D"] if c != grupo]
     st.dataframe(
-        df[cols_ordenadas],
-        use_container_width=True,
-        hide_index=True,
-        column_config=column_config
+        df[cols].style.applymap(colorear_celdas), 
+        use_container_width=True, 
+        hide_index=True
     )
+
+# --- SECCIÓN QR ---
+st.divider()
+st.header("📱 QR para compartir")
+st.write("Escanea o descarga este QR para entrar a la App:")
+
+# 👇👇👇 ¡ATENCIÓN! PEGA TU LINK ACÁ ABAJO 👇👇👇
+url = "https://TU-LINK-REAL-AQUI.streamlit.app" 
+# 👆👆👆 BORRA LO QUE HAY Y PEGA TU LINK REAL 👆👆👆
+
+qr = qrcode.make(url)
+buf = BytesIO()
+qr.save(buf, format="PNG")
+img_bytes = buf.getvalue()
+
+c1, c2 = st.columns([1, 2])
+with c1:
+    st.image(img_bytes, caption="Escaneame", width=150)
+with c2:
+    st.download_button("⬇️ Descargar Imagen QR", img_bytes, "qr_turnos.png", "image/png")
