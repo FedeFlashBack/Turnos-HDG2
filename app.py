@@ -5,7 +5,7 @@ import qrcode
 from io import BytesIO
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Rotación Cañuelas", page_icon="🏭", layout="centered")
+st.set_page_config(page_title="Turnos-HDG2", page_icon="🏭", layout="centered")
 
 # --- ESTILOS VISUALES ---
 st.markdown("""
@@ -93,7 +93,7 @@ st.header("📱 QR para compartir")
 st.write("Escanea o descarga este QR para entrar a la App:")
 
 # 👇👇👇 ¡ATENCIÓN! PEGA TU LINK ACÁ ABAJO 👇👇👇
-url = "https://TU-LINK-REAL-AQUI.streamlit.app" 
+url = "https://turnos-hdg2-ynyvrw9zsvyrqvet8r746z.streamlit.app/" 
 # 👆👆👆 BORRA LO QUE HAY Y PEGA TU LINK REAL 👆👆👆
 
 qr = qrcode.make(url)
