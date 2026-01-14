@@ -1,22 +1,3 @@
-¡Perfecto, Federico! Ya tengo tu código base y tu link real.
-
-Analizando lo que me pasaste, ese código todavía tiene el error de los "Martes Amarillos" (porque pinta todas las columnas) y le faltan las mejoras del Tablero y el Excel.
-
-Aquí tienes la VERSIÓN DEFINITIVA (7.1).
-
-🚀 ¿Qué tiene esta versión?
-SOLUCIONADO: Ya no pinta de amarillo los días "Mar" (Martes) ni "Mié" (Miércoles). Solo pinta los turnos.
-
-Tablero de Control: Arriba te dice quién está HOY en planta.
-
-Excel: Botón para bajar la planilla.
-
-Tu Link Real: Ya lo dejé puesto en el QR para que no tengas que editar nada.
-
-Copia TODO esto y pégalo en tu app.py:
-
-Python
-
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
@@ -148,8 +129,7 @@ if st.button("Buscar Turnos"):
 
     cols = ["Fecha", "Día", grupo_clave] + [c for c in ["52A", "52B", "52C", "52D"] if c != grupo_clave]
     
-    # --- AQUÍ ESTÁ EL ARREGLO DE LOS COLORES ---
-    # Usamos subset para que NO pinte la columna Día ni Fecha
+    # Tabla con corrección de colores (Solo pinta los equipos)
     st.dataframe(
         df[cols].style.applymap(colorear_celdas, subset=["52A", "52B", "52C", "52D"]), 
         use_container_width=True, 
@@ -174,7 +154,6 @@ with st.expander("ℹ️ Referencias"):
 
 # --- QR ---
 with st.expander("📱 Descargar QR"):
-    # TU LINK REAL (Ya puesto)
     url = "https://turnos-hdg2-ynyvrw9zsvyrqvet8r746z.streamlit.app/" 
     qr = qrcode.make(url)
     buf = BytesIO()
