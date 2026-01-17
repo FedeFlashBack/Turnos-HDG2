@@ -73,13 +73,14 @@ def calcular_estado_dia(fecha: date) -> dict:
     for grupo in GRUPOS:
         codigo = patron_detalle[(offsets[grupo] + diff) % 24]
         estado[grupo] = {"texto": codigo, "feriado": es_feriado, "marca": marca}
+
     return estado
 
 @st.cache_data(show_spinner=False)
 def obtener_tabla_diaria(fecha_inicio: date, dias_a_mostrar: int) -> pd.DataFrame:
     """
     Devuelve:
-    - FechaISO: YYYY-MM-DD (para exportar a Excel/CSV sin que Excel invente meses)
+    - FechaISO: YYYY-MM-DD (para exportar a Excel sin que lo interprete mal)
     - Fecha: dd/mm (para mostrar en la app)
     """
     datos = []
@@ -119,19 +120,6 @@ def exportar_tabla_excel(df: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="Turnos")
     return output.getvalue()
-
-@st.cache_data(show_spinner=False)
-def exportar_tabla_csv_iphone(df: pd.DataFrame) -> bytes:
-    """
-    CSV compatible con iPhone/iOS:
-    - UTF-8 con BOM (utf-8-sig)
-    - Remueve emoji 🇦🇷 (a veces rompe previsualizadores)
-    """
-    df_csv = df.copy()
-    # sacamos el emoji para evitar crashes en algunos viewers
-    df_csv = df_csv.replace(" 🇦🇷", " AR", regex=False)
-    text = df_csv.to_csv(index=False, encoding="utf-8-sig")
-    return text.encode("utf-8-sig")
 
 @st.cache_data(show_spinner=False)
 def generar_excel_anual(anio: int) -> bytes:
@@ -204,10 +192,14 @@ def generar_excel_anual(anio: int) -> bytes:
 
 def preparar_excel_para_descarga(df_mostrado: pd.DataFrame, df_original: pd.DataFrame) -> pd.DataFrame:
     """
-    Devuelve un df igual al mostrado pero con columna Fecha en formato ISO para Excel/CSV.
+    df_mostrado: el df que estás mostrando (cols)
+    df_original: el df completo que tiene FechaISO
+    Devuelve un df igual al mostrado pero con columna Fecha en formato ISO para Excel.
     """
     df_excel = df_mostrado.copy()
+    # Reemplaza la columna Fecha por la ISO
     df_excel["Fecha"] = df_original["FechaISO"].values
+    # Por las dudas, si quedó FechaISO colgando en el df_mostrado, la quitamos
     df_excel = df_excel.drop(columns=["FechaISO"], errors="ignore")
     return df_excel
 
@@ -251,39 +243,26 @@ with st.expander("⚡ Acceso rápido: próximos 14 días", expanded=st.session_s
     if st.session_state.show_rapido:
         df_rapido = obtener_tabla_diaria(hoy, 14)
 
-        df_rapido_mostrar = df_rapido[["Fecha", "Día", "52A", "52B", "52C", "52D"]]
-
         st.dataframe(
-            df_rapido_mostrar.style.applymap(colorear_celdas_web, subset=GRUPOS),
+            df_rapido[["Fecha", "Día", "52A", "52B", "52C", "52D"]].style.applymap(
+                colorear_celdas_web, subset=GRUPOS
+            ),
             use_container_width=True,
             hide_index=True
         )
 
-        # Excel: FechaISO
-        df_rapido_excel = df_rapido_mostrar.copy()
-        df_rapido_excel["Fecha"] = df_rapido["FechaISO"]
-        excel_rapido = exportar_tabla_excel(df_rapido_excel)
+        # Excel (usar FechaISO)
+        df_excel_rapido = df_rapido[["Fecha", "Día", "52A", "52B", "52C", "52D"]].copy()
+        df_excel_rapido["Fecha"] = df_rapido["FechaISO"]
+        excel_rapido = exportar_tabla_excel(df_excel_rapido)
 
-        # CSV iPhone: UTF-8 BOM + sin emoji
-        csv_rapido = exportar_tabla_csv_iphone(df_rapido_excel)
-
-        d1, d2 = st.columns(2)
-        with d1:
-            st.download_button(
-                label="📥 Excel (14 días)",
-                data=excel_rapido,
-                file_name=f"turnos_prox14_{hoy.strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="dl_rapido_14_xlsx"
-            )
-        with d2:
-            st.download_button(
-                label="📄 CSV iPhone (14 días)",
-                data=csv_rapido,
-                file_name=f"turnos_prox14_{hoy.strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key="dl_rapido_14_csv"
-            )
+        st.download_button(
+            label="📥 Descargar esos 14 días en Excel",
+            data=excel_rapido,
+            file_name=f"turnos_prox14_{hoy.strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_rapido_14"
+        )
 
 st.divider()
 
@@ -328,29 +307,17 @@ with tabs[0]:
             column_config=cfg
         )
 
-        # Excel/CSV (usar FechaISO)
+        # Excel (usar FechaISO para no romper en Excel)
         df_excel = preparar_excel_para_descarga(df_mostrar, df)
-
         excel_diario = exportar_tabla_excel(df_excel)
-        csv_diario = exportar_tabla_csv_iphone(df_excel)
 
-        d1, d2 = st.columns(2)
-        with d1:
-            st.download_button(
-                label="📥 Descargar Excel",
-                data=excel_diario,
-                file_name=f"turnos_{grupo_clave}_{fecha.strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="t0_dl_excel"
-            )
-        with d2:
-            st.download_button(
-                label="📄 Descargar CSV iPhone",
-                data=csv_diario,
-                file_name=f"turnos_{grupo_clave}_{fecha.strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key="t0_dl_csv"
-            )
+        st.download_button(
+            label="📥 Descargar tabla en Excel",
+            data=excel_diario,
+            file_name=f"turnos_{grupo_clave}_{fecha.strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="t0_dl_excel"
+        )
 
 # =======================
 # TAB 2: ANUAL (HELADERA)
