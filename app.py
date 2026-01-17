@@ -1,246 +1,366 @@
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-import qrcode
+from datetime import date, timedelta, datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 import calendar
+import qrcode
 
-# --- CONFIGURACIÓN ---
+# ================== CONFIGURACIÓN ==================
 st.set_page_config(page_title="Turno-HDG2", page_icon="🏭", layout="centered")
 
-# --- ESTILOS VISUALES ---
+TZ_AR = ZoneInfo("America/Argentina/Buenos_Aires")
+
+def hoy_ar() -> date:
+    return datetime.now(TZ_AR).date()
+
+# ================== ESTILOS ==================
 st.markdown("""
-    <style>
-    .stButton>button { width: 100%; border-radius: 10px; background-color: #FF4B4B; color: white; font-weight: bold; }
-    div[data-testid="stMetricValue"] { font-size: 1rem; }
-    h1, h2, h3 { text-align: center; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.stButton>button { width: 100%; border-radius: 10px; background-color: #FF4B4B; color: white; font-weight: bold; }
+div[data-testid="stMetricValue"] { font-size: 1rem; }
+h1, h2, h3 { text-align: center; }
+</style>
+""", unsafe_allow_html=True)
 
-# --- DATOS ---
-nombres = { 
-    "52A": "52A (Palacios)", 
-    "52B": "52B (Schneider)", 
-    "52C": "52C (Troncoso)", 
-    "52D": "52D (Gallardo)" 
+# ================== DATOS ==================
+nombres = {
+    "52A": "52A (Palacios)",
+    "52B": "52B (Schneider)",
+    "52C": "52C (Troncoso)",
+    "52D": "52D (Gallardo)"
 }
-# Días cortos para el Excel (L, M, M, J, V, S, D)
-dias_esp_corto = ["L", "M", "M", "J", "V", "S", "D"]
+
+GRUPOS = ["52A", "52B", "52C", "52D"]
+
 dias_esp = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-meses_esp = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+dias_esp_corto = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sa", "Do"]
+meses_esp = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
-# --- FERIADOS HASTA 2030 (Estimados + Fijos) ---
-feriados = []
-for anio in range(2025, 2031):
-    feriados.extend([
-        date(anio, 1, 1), date(anio, 3, 24), date(anio, 4, 2), date(anio, 5, 1),
-        date(anio, 5, 25), date(anio, 6, 20), date(anio, 7, 9), date(anio, 8, 17),
-        date(anio, 10, 12), date(anio, 11, 20), date(anio, 12, 8), date(anio, 12, 25)
-    ])
-# Feriados móviles específicos conocidos
-feriados.extend([
-    date(2025, 3, 3), date(2025, 3, 4), date(2025, 4, 18),
-    date(2026, 2, 16), date(2026, 2, 17), date(2026, 4, 3),
-])
+# ================== FERIADOS (holidays) ==================
+try:
+    import holidays
+    feriados_ar = holidays.country_holidays("AR", years=range(2025, 2031))
+    feriados_set = set(feriados_ar.keys())
+except Exception:
+    # Fallback (menos exacto para móviles)
+    feriados_set = set()
+    for anio in range(2025, 2031):
+        feriados_set.update({
+            date(anio, 1, 1), date(anio, 3, 24), date(anio, 4, 2), date(anio, 5, 1),
+            date(anio, 5, 25), date(anio, 6, 20), date(anio, 7, 9), date(anio, 8, 17),
+            date(anio, 10, 12), date(anio, 11, 20), date(anio, 12, 8), date(anio, 12, 25),
+        })
 
-# --- PATRÓN DE TURNOS ---
+# ================== PATRÓN DE TURNOS ==================
 patron_detalle = [
-    "M1","M2","M3","M4","M5","M6", "F1", 
-    "N1","N2","N3","N4","N5","N6", "F1","F2","F3", 
-    "T1","T2","T3","T4","T5","T6", "F1","F2"
+    "M1", "M2", "M3", "M4", "M5", "M6", "F1",
+    "N1", "N2", "N3", "N4", "N5", "N6", "F1", "F2", "F3",
+    "T1", "T2", "T3", "T4", "T5", "T6", "F1", "F2"
 ]
 
-# --- FUNCIONES DE CÁLCULO ---
-def calcular_estado_dia(fecha):
-    offsets = {"52A": 14, "52B": 20, "52C": 2, "52D": 8}
-    fecha_base = date(2025, 1, 1)
+offsets = {"52A": 14, "52B": 20, "52C": 2, "52D": 8}
+fecha_base = date(2025, 1, 1)
+
+# ================== FUNCIONES ==================
+def calcular_estado_dia(fecha: date) -> dict:
     diff = (fecha - fecha_base).days
-    estado = {}
-    es_feriado = fecha in feriados
+    es_feriado = fecha in feriados_set
     marca = " 🇦🇷" if es_feriado else ""
-    for grupo in ["52A", "52B", "52C", "52D"]:
+
+    estado = {}
+    for grupo in GRUPOS:
         codigo = patron_detalle[(offsets[grupo] + diff) % 24]
         estado[grupo] = {"texto": codigo, "feriado": es_feriado, "marca": marca}
+
     return estado
 
-def obtener_tabla_diaria(fecha_inicio, dias_a_mostrar):
+@st.cache_data(show_spinner=False)
+def obtener_tabla_diaria(fecha_inicio: date, dias_a_mostrar: int) -> pd.DataFrame:
+    """
+    Devuelve:
+    - FechaISO: YYYY-MM-DD (para exportar a Excel sin que lo interprete mal)
+    - Fecha: dd/mm (para mostrar en la app)
+    """
     datos = []
     for i in range(dias_a_mostrar):
         fecha_actual = fecha_inicio + timedelta(days=i)
         estado = calcular_estado_dia(fecha_actual)
-        fila = {
+        datos.append({
+            "FechaISO": fecha_actual.strftime("%Y-%m-%d"),
             "Fecha": fecha_actual.strftime("%d/%m"),
             "Día": dias_esp[fecha_actual.weekday()],
             "52A": estado["52A"]["texto"] + estado["52A"]["marca"],
             "52B": estado["52B"]["texto"] + estado["52B"]["marca"],
             "52C": estado["52C"]["texto"] + estado["52C"]["marca"],
             "52D": estado["52D"]["texto"] + estado["52D"]["marca"],
-        }
-        datos.append(fila)
+        })
     return pd.DataFrame(datos)
 
-def colorear_celdas_web(val):
+def colorear_celdas_web(val) -> str:
     val_str = str(val)
-    color = ''
-    weight = 'normal'
-    if '🇦🇷' in val_str: color = '#ffb3b3'; weight = 'bold'
-    elif 'M' in val_str: color = '#fffec8'
-    elif 'T' in val_str: color = '#ffdcf5'
-    elif 'N' in val_str: color = '#d0e0ff'
-    elif 'F' in val_str: color = '#d9f2d0'
-    return f'background-color: {color}; color: black; font-weight: {weight}'
+    color = ""
+    weight = "normal"
+    if "🇦🇷" in val_str:
+        color = "#ffb3b3"; weight = "bold"
+    elif "M" in val_str:
+        color = "#fffec8"
+    elif "T" in val_str:
+        color = "#ffdcf5"
+    elif "N" in val_str:
+        color = "#d0e0ff"
+    elif "F" in val_str:
+        color = "#d9f2d0"
+    return f"background-color: {color}; color: black; font-weight: {weight}"
 
-# --- FUNCIÓN GENERADOR DE EXCEL PARA IMPRIMIR (HELADERA) 🎨 ---
-def generar_excel_anual(anio):
+@st.cache_data(show_spinner=False)
+def exportar_tabla_excel(df: pd.DataFrame) -> bytes:
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        workbook = writer.book
-        ws = workbook.add_worksheet(f'Turnos {anio}')
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Turnos")
+    return output.getvalue()
 
-        # CONFIGURACIÓN DE IMPRESIÓN
-        ws.set_landscape() # Hoja Horizontal
-        ws.set_paper(9)    # Tamaño A4
-        ws.fit_to_pages(1, 0) # Ajustar ancho a 1 página
+@st.cache_data(show_spinner=False)
+def generar_excel_anual(anio: int) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        workbook = writer.book
+        ws = workbook.add_worksheet(f"Turnos {anio}")
+
+        ws.set_landscape()
+        ws.set_paper(9)          # A4
+        ws.fit_to_pages(1, 0)
         ws.set_margins(0.5, 0.5, 0.5, 0.5)
 
-        # FORMATOS
-        # Título del Mes (Gris claro)
-        fmt_titulo = workbook.add_format({'bold': True, 'font_size': 14, 'bg_color': '#DDDDDD', 'border': 1, 'align': 'left'})
-        
-        # Fila de Letras (D, L, M...) -> AMARILLO/DORADO (Como en la foto)
-        fmt_dias_letras = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#FFEB9C', 'border': 1, 'font_size': 9})
-        
-        # Fila de Números (1, 2, 3...) -> BLANCO/GRIS
-        fmt_dias_numeros = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#F2F2F2', 'border': 1, 'font_size': 9})
-        
-        # Nombre del Grupo (Lateral)
-        fmt_grupo = workbook.add_format({'bold': True, 'border': 1, 'font_size': 10, 'align': 'left'})
-        
-        # Colores de Turnos (Celdas de datos)
-        fmt_m = workbook.add_format({'bg_color': '#FFFEC8', 'align': 'center', 'border': 1, 'font_size': 9})
-        fmt_t = workbook.add_format({'bg_color': '#FFDCF5', 'align': 'center', 'border': 1, 'font_size': 9})
-        fmt_n = workbook.add_format({'bg_color': '#D0E0FF', 'align': 'center', 'border': 1, 'font_size': 9})
-        fmt_f = workbook.add_format({'bg_color': '#D9F2D0', 'align': 'center', 'border': 1, 'font_size': 9, 'color': '#555555'}) # Letra gris suave
-        fmt_fer = workbook.add_format({'bg_color': '#FFB3B3', 'align': 'center', 'border': 1, 'bold': True, 'font_size': 9})
+        fmt_titulo = workbook.add_format({"bold": True, "font_size": 14, "bg_color": "#DDDDDD", "border": 1, "align": "left"})
+        fmt_dias_letras = workbook.add_format({"bold": True, "align": "center", "bg_color": "#FFEB9C", "border": 1, "font_size": 9})
+        fmt_dias_numeros = workbook.add_format({"bold": True, "align": "center", "bg_color": "#F2F2F2", "border": 1, "font_size": 9})
+        fmt_grupo = workbook.add_format({"bold": True, "border": 1, "font_size": 10, "align": "left"})
 
-        # Anchos de columna
-        ws.set_column(0, 0, 18) # Columna Nombres un poco más ancha
-        ws.set_column(1, 31, 2.8) # Columnas Días (más finitas para que entren bien)
+        fmt_m = workbook.add_format({"bg_color": "#FFFEC8", "align": "center", "border": 1, "font_size": 9})
+        fmt_t = workbook.add_format({"bg_color": "#FFDCF5", "align": "center", "border": 1, "font_size": 9})
+        fmt_n = workbook.add_format({"bg_color": "#D0E0FF", "align": "center", "border": 1, "font_size": 9})
+        fmt_f = workbook.add_format({"bg_color": "#D9F2D0", "align": "center", "border": 1, "font_size": 9, "color": "#555555"})
+        fmt_fer = workbook.add_format({"bg_color": "#FFB3B3", "align": "center", "border": 1, "bold": True, "font_size": 9})
+
+        ws.set_column(0, 0, 18)
+        ws.set_column(1, 31, 2.8)
 
         fila = 0
-        grupos = ["52A", "52B", "52C", "52D"]
-
         for mes in range(1, 13):
-            # 1. TÍTULO MES
             ws.merge_range(fila, 0, fila, 31, f"{meses_esp[mes]} {anio}", fmt_titulo)
             fila += 1
-            
-            # 2. FILA DE LETRAS (D, L, M...) - En un cuadrado separado
+
             dias_en_mes = calendar.monthrange(anio, mes)[1]
+
             ws.write(fila, 0, "DÍA", fmt_dias_letras)
             for d in range(1, dias_en_mes + 1):
                 dia_semana = dias_esp_corto[date(anio, mes, d).weekday()]
                 ws.write(fila, d, dia_semana, fmt_dias_letras)
             fila += 1
 
-            # 3. FILA DE NÚMEROS (1, 2, 3...) - En otro cuadrado separado
             ws.write(fila, 0, "FECHA", fmt_dias_numeros)
             for d in range(1, dias_en_mes + 1):
                 ws.write(fila, d, d, fmt_dias_numeros)
             fila += 1
 
-            # 4. FILAS DE DATOS (Los Turnos)
-            for gr in grupos:
+            for gr in GRUPOS:
                 ws.write(fila, 0, nombres[gr], fmt_grupo)
                 for d in range(1, dias_en_mes + 1):
-                    fecha = date(anio, mes, d)
-                    info = calcular_estado_dia(fecha)
-                    letra = info[gr]["texto"][0] # Solo la letra M, T, N, F
-                    es_fer = info[gr]["feriado"]
-                    
-                    estilo = fmt_f # Por defecto Franco
-                    if es_fer: estilo = fmt_fer
-                    elif letra == 'M': estilo = fmt_m
-                    elif letra == 'T': estilo = fmt_t
-                    elif letra == 'N': estilo = fmt_n
-                    
+                    f = date(anio, mes, d)
+                    info = calcular_estado_dia(f)[gr]
+                    letra = info["texto"][0]
+                    es_fer = info["feriado"]
+
+                    estilo = fmt_f
+                    if es_fer:
+                        estilo = fmt_fer
+                    elif letra == "M":
+                        estilo = fmt_m
+                    elif letra == "T":
+                        estilo = fmt_t
+                    elif letra == "N":
+                        estilo = fmt_n
+
                     ws.write(fila, d, letra, estilo)
                 fila += 1
-            
-            fila += 1 # Espacio en blanco entre meses
+
+            fila += 1
 
     return output.getvalue()
 
-# ================= INTERFAZ DE USUARIO =================
+def preparar_excel_para_descarga(df_mostrado: pd.DataFrame, df_original: pd.DataFrame) -> pd.DataFrame:
+    """
+    df_mostrado: el df que estás mostrando (cols)
+    df_original: el df completo que tiene FechaISO
+    Devuelve un df igual al mostrado pero con columna Fecha en formato ISO para Excel.
+    """
+    df_excel = df_mostrado.copy()
+    # Reemplaza la columna Fecha por la ISO
+    df_excel["Fecha"] = df_original["FechaISO"].values
+    # Por las dudas, si quedó FechaISO colgando en el df_mostrado, la quitamos
+    df_excel = df_excel.drop(columns=["FechaISO"], errors="ignore")
+    return df_excel
 
+# ================== UI ==================
 st.title("🏭 Turno-HDG2")
 
-# --- 1. TABLERO HOY ---
-st.markdown("### 📢 Estado de Planta (Hoy)")
-hoy = date.today()
+# --- ESTADO DE PLANTA (HOY) ---
+hoy = hoy_ar()
 estado_hoy = calcular_estado_dia(hoy)
-# Buscamos quién está en cada turno
-q_m = [k for k,v in estado_hoy.items() if "M" in v["texto"]][0]
-q_t = [k for k,v in estado_hoy.items() if "T" in v["texto"]][0]
-q_n = [k for k,v in estado_hoy.items() if "N" in v["texto"]][0]
-q_f = [k for k,v in estado_hoy.items() if "F" in v["texto"]][0]
+
+st.markdown("### 📢 Estado de Planta (Hoy)")
+st.caption(f"📌 {dias_esp[hoy.weekday()]} {hoy.strftime('%d/%m/%Y')}")
+
+if estado_hoy["52A"]["feriado"]:
+    st.warning("🇦🇷 Hoy es feriado.")
+
+q_m = [k for k, v in estado_hoy.items() if "M" in v["texto"]][0]
+q_t = [k for k, v in estado_hoy.items() if "T" in v["texto"]][0]
+q_n = [k for k, v in estado_hoy.items() if "N" in v["texto"]][0]
+q_f = [k for k, v in estado_hoy.items() if "F" in v["texto"]][0]
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("☀️ Mañana", q_m, estado_hoy[q_m]["texto"])
-c2.metric("🌆 Tarde", q_t, estado_hoy[q_t]["texto"])
-c3.metric("🌙 Noche", q_n, estado_hoy[q_n]["texto"])
-c4.metric("🏖️ Franco", q_f, estado_hoy[q_f]["texto"])
+c1.metric("☀️ Mañana", nombres[q_m], estado_hoy[q_m]["texto"])
+c2.metric("🌆 Tarde", nombres[q_t], estado_hoy[q_t]["texto"])
+c3.metric("🌙 Noche", nombres[q_n], estado_hoy[q_n]["texto"])
+c4.metric("🏖️ Franco", nombres[q_f], estado_hoy[q_f]["texto"])
+
+# --- ACCESO RÁPIDO (SE ABRE Y CIERRA) ---
+if "show_rapido" not in st.session_state:
+    st.session_state.show_rapido = False
+
+with st.expander("⚡ Acceso rápido: próximos 14 días", expanded=st.session_state.show_rapido):
+    colA, colB = st.columns(2)
+    if colA.button("📅 Mostrar", key="btn_mostrar_rapido"):
+        st.session_state.show_rapido = True
+        st.rerun()
+    if colB.button("❌ Cerrar", key="btn_cerrar_rapido"):
+        st.session_state.show_rapido = False
+        st.rerun()
+
+    if st.session_state.show_rapido:
+        df_rapido = obtener_tabla_diaria(hoy, 14)
+
+        st.dataframe(
+            df_rapido[["Fecha", "Día", "52A", "52B", "52C", "52D"]].style.applymap(
+                colorear_celdas_web, subset=GRUPOS
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Excel (usar FechaISO)
+        df_excel_rapido = df_rapido[["Fecha", "Día", "52A", "52B", "52C", "52D"]].copy()
+        df_excel_rapido["Fecha"] = df_rapido["FechaISO"]
+        excel_rapido = exportar_tabla_excel(df_excel_rapido)
+
+        st.download_button(
+            label="📥 Descargar esos 14 días en Excel",
+            data=excel_rapido,
+            file_name=f"turnos_prox14_{hoy.strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_rapido_14"
+        )
 
 st.divider()
 
-# --- 2. BUSCADOR RÁPIDO ---
-st.write("### 📅 Calendario Diario")
-grupo_clave = st.selectbox("Ver cronograma de:", ["52A", "52B", "52C", "52D"], format_func=lambda x: nombres[x])
-c1, c2 = st.columns(2)
-fecha = c1.date_input("Desde:", date.today())
-dias = c2.slider("Días:", 1, 45, 14)
+# --- TABS (UNA SE VE, LAS OTRAS SE OCULTAN) ---
+tabs = st.tabs(["📅 Calendario Diario", "❄️ Calendario Anual (para imprimir)", "📱 QR"])
 
-if st.button("Ver Tabla"):
-    df = obtener_tabla_diaria(fecha, dias)
-    cfg = {
-        "Fecha": st.column_config.TextColumn("📅 Fecha", width="small"),
-        "Día": st.column_config.TextColumn("Día", width="small"),
-        "52A": st.column_config.TextColumn(nombres["52A"], width="small"),
-        "52B": st.column_config.TextColumn(nombres["52B"], width="small"),
-        "52C": st.column_config.TextColumn(nombres["52C"], width="small"),
-        "52D": st.column_config.TextColumn(nombres["52D"], width="small"),
-    }
-    cfg[grupo_clave] = st.column_config.TextColumn(f"🔴 {nombres[grupo_clave]}", width="medium")
-    cols = ["Fecha", "Día", grupo_clave] + [c for c in ["52A", "52B", "52C", "52D"] if c != grupo_clave]
-    st.dataframe(df[cols].style.applymap(colorear_celdas_web, subset=["52A", "52B", "52C", "52D"]), 
-                 use_container_width=True, hide_index=True, column_config=cfg)
+# =======================
+# TAB 1: CALENDARIO DIARIO
+# =======================
+with tabs[0]:
+    grupo_clave = st.selectbox(
+        "Ver cronograma de:",
+        GRUPOS,
+        format_func=lambda x: nombres[x],
+        key="t0_grupo"
+    )
 
-st.divider()
+    c1, c2 = st.columns(2)
+    fecha = c1.date_input("Desde:", hoy_ar(), key="t0_fecha")
+    dias = c2.slider("Días:", 1, 45, 14, key="t0_dias")
 
-# --- 3. DESCARGA PARA LA HELADERA (ACTUALIZADO) ---
-st.write("### ❄️ Calendario Anual ")
-st.info("Descarga el año completo en formato calendario. Ideal para imprimir.")
+    if st.button("Ver Tabla", key="t0_btn_ver"):
+        df = obtener_tabla_diaria(fecha, dias)
 
-col_anio, col_btn = st.columns([1, 2])
-anio_sel = col_anio.selectbox("Año a imprimir:", range(2025, 2031))
+        cfg = {
+            "Fecha": st.column_config.TextColumn("📅 Fecha", width="small"),
+            "Día": st.column_config.TextColumn("Día", width="small"),
+            "52A": st.column_config.TextColumn(nombres["52A"], width="small"),
+            "52B": st.column_config.TextColumn(nombres["52B"], width="small"),
+            "52C": st.column_config.TextColumn(nombres["52C"], width="small"),
+            "52D": st.column_config.TextColumn(nombres["52D"], width="small"),
+        }
+        cfg[grupo_clave] = st.column_config.TextColumn(f"🔴 {nombres[grupo_clave]}", width="medium")
 
-if col_btn.button("Generar Excel para Imprimir"):
-    with st.spinner("Preparando hoja A4..."):
+        cols = ["Fecha", "Día", grupo_clave] + [c for c in GRUPOS if c != grupo_clave]
+        df_mostrar = df[cols]
+
+        st.dataframe(
+            df_mostrar.style.applymap(colorear_celdas_web, subset=GRUPOS),
+            use_container_width=True,
+            hide_index=True,
+            column_config=cfg
+        )
+
+        # Excel (usar FechaISO para no romper en Excel)
+        df_excel = preparar_excel_para_descarga(df_mostrar, df)
+        excel_diario = exportar_tabla_excel(df_excel)
+
+        st.download_button(
+            label="📥 Descargar tabla en Excel",
+            data=excel_diario,
+            file_name=f"turnos_{grupo_clave}_{fecha.strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="t0_dl_excel"
+        )
+
+# =======================
+# TAB 2: ANUAL (HELADERA)
+# =======================
+with tabs[1]:
+    st.write("### ❄️ Calendario Anual (para imprimir)")
+    st.info("Descarga el año completo en formato calendario. Ideal para imprimir.")
+
+    col_anio, col_btn = st.columns([1, 2])
+    anio_sel = col_anio.selectbox("Año a imprimir:", range(2025, 2031), key="anio_sel")
+
+    if col_btn.button("Generar Excel para Imprimir", key="btn_excel_anual"):
         excel_data = generar_excel_anual(anio_sel)
         st.success("¡Listo!")
         st.download_button(
             label=f"📥 Descargar Año {anio_sel}",
             data=excel_data,
             file_name=f"Turnos_anual_{anio_sel}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_excel_anual"
         )
 
-# --- 4. QR ---
-st.divider()
-with st.expander("📱 Descargar QR"):
-    # TU LINK
-    url = "https://turnos-hdg2-ynyvrw9zsvyrqvet8r746z.streamlit.app/" 
+# =======================
+# TAB 3: QR
+# =======================
+with tabs[2]:
+    st.write("### 📱 QR de la App")
+    url = "https://turnos-hdg2-ynyvrw9zsvyrqvet8r746z.streamlit.app/"
+
+    st.link_button("🔗 Abrir la app", url)
+    st.code(url, language="text")
+
     qr = qrcode.make(url)
     buf = BytesIO()
     qr.save(buf, format="PNG")
-    st.download_button("⬇️ Descargar QR", buf.getvalue(), "qr_turnos.png", "image/png")
+    qr_bytes = buf.getvalue()
+
+    st.image(qr_bytes, caption="Escaneá y listo.", use_container_width=False)
+    st.download_button(
+        label="⬇️ Descargar QR",
+        data=qr_bytes,
+        file_name="qr_turnos.png",
+        mime="image/png",
+        key="dl_qr"
+    )
+
